@@ -1,0 +1,90 @@
+name: CI
+
+# Remove default permissions of GITHUB_TOKEN for security
+# https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs
+permissions: {}
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node_version: [22, 24]
+        include:
+          # Active LTS + other OS
+          - os: macos-latest
+            node_version: 24
+          - os: windows-latest
+            node_version: 24
+      fail-fast: false
+
+    name: 'Build&Test: node-${{ matrix.node_version }}, ${{ matrix.os }}'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+
+      - name: Set node version to ${{ matrix.node_version }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ matrix.node_version }}
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install
+
+      - name: Install playwright
+        run: pnpm --filter ./examples exec playwright install chromium --with-deps
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Test
+        run: pnpm run test
+
+  lint:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    name: 'Lint: node-24, ubuntu-latest'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+
+      - name: Set node version to 24
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Check formatting
+        run: pnpm run format --check
