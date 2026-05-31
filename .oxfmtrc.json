@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "ignorePatterns": [
+    "**/dist/**",
+    "packages/*/CHANGELOG.md",
+    "**/fixtures/**",
+    "**/fixtures-labels/**"
+  ]
+}
