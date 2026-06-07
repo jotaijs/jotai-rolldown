@@ -8,7 +8,7 @@
     "rolldown",
     "rolldown-plugin"
   ],
-  "homepage": "https://github.com/jotaijs/jotai-rolldown/plugins/tree/main/packages/jotai#readme",
+  "homepage": "https://github.com/jotaijs/jotai-rolldown#readme",
   "bugs": {
     "url": "https://github.com/jotaijs/jotai-rolldown/issues"
   },
