@@ -41,6 +41,4 @@ jobs:
         run: pnpm build
 
       - name: Publish package
-        run: npm i -g npm@^11.5.2 && pnpm run ci-publish "$REF_NAME"
-        env:
-          REF_NAME: ${{ github.ref_name }}
+        run: npm i -g npm@^11.5.2 && pnpm publish
