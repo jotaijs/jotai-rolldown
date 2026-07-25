@@ -2,6 +2,7 @@ import { withMagicString, type RolldownString } from 'rolldown-string'
 import type { Plugin } from 'rolldown'
 import type { ESTree } from 'rolldown/utils'
 import { Visitor } from 'rolldown/utils'
+import { ScopedVisitor, type VisitorContext } from 'oxc-unshadowed-visitor'
 import type { JotaiPluginOptions } from './types.js'
 import { createAtomImportMap, type AtomImportMap } from './atomImportMap.js'
 import { escapeRegExp, getDefaultExportAtomName, getFileKey } from './utils.js'
@@ -16,6 +17,11 @@ const JOTAI_CACHE_INIT = `globalThis.jotaiAtomCache = globalThis.jotaiAtomCache 
     return inst;
   }
 };`
+
+type TransformRecordData =
+  | { kind: 'debug-label'; label: string; insertPos: number }
+  | { kind: 'debug-label-default-export'; exportStart: number; declStart: number; declEnd: number }
+  | { kind: 'refresh'; key: string; start: number; end: number }
 
 function buildCodeFilter(atomNames: ReadonlyArray<string>): RegExp {
   const needles = new Set<string>(['jotai', 'atom'])
@@ -64,44 +70,29 @@ function isExpressionExportDefault(
   }
 }
 
-function collectDebugLabelNames(
-  declaration: ESTree.VariableDeclaration,
-  atomImportMap: AtomImportMap,
-): string[] {
-  const labels: string[] = []
-  for (const declarator of declaration.declarations) {
-    if (declarator.id.type !== 'Identifier') continue
-    if (!declarator.init) continue
-    if (!atomImportMap.isAtomImport(declarator.init)) continue
-    labels.push(declarator.id.name)
-  }
-  return labels
-}
-
 function scanForAtomCalls(
   node: ESTree.Expression,
   accessPath: string[],
   atomImportMap: AtomImportMap,
   fileKey: string,
-  s: RolldownString,
-): boolean {
-  if (node.type === 'CallExpression' && atomImportMap.isAtomImport(node.callee)) {
-    const key = createCacheKey(fileKey, accessPath)
-    wrapWithCacheGetExpression(s, key, node.start, node.end)
-    return true
+  ctx: VisitorContext<TransformRecordData>,
+): void {
+  if (node.type === 'CallExpression') {
+    const name = atomImportMap.getAtomImportName(node.callee)
+    if (name !== null) {
+      const key = createCacheKey(fileKey, accessPath)
+      ctx.record({ name, node, data: { kind: 'refresh', key, start: node.start, end: node.end } })
+    }
+    return
   }
   if (node.type === 'ArrayExpression') {
-    let found = false
     for (const [index, element] of node.elements.entries()) {
       if (element === null || element.type === 'SpreadElement') continue
-      if (scanForAtomCalls(element, [...accessPath, index.toString()], atomImportMap, fileKey, s)) {
-        found = true
-      }
+      scanForAtomCalls(element, [...accessPath, index.toString()], atomImportMap, fileKey, ctx)
     }
-    return found
+    return
   }
   if (node.type === 'ObjectExpression') {
-    let found = false
     for (const property of node.properties) {
       if (property.type === 'Property') {
         let keyName: string
@@ -120,22 +111,19 @@ function scanForAtomCalls(
         }
         if (
           property.value.type !== 'FunctionExpression' &&
-          property.value.type !== 'ArrowFunctionExpression' &&
+          property.value.type !== 'ArrowFunctionExpression'
+        ) {
           scanForAtomCalls(
             property.value as ESTree.Expression,
             [...accessPath, keyName],
             atomImportMap,
             fileKey,
-            s,
+            ctx,
           )
-        ) {
-          found = true
         }
       }
     }
-    return found
   }
-  return false
 }
 
 export function jotaiPlugin(options: JotaiPluginOptions = {}): Plugin {
@@ -186,84 +174,132 @@ export function jotaiPlugin(options: JotaiPluginOptions = {}): Plugin {
         const program = meta?.ast ?? this.parse(s.original, { lang })
 
         const atomImportMap = createAtomImportMap(atomNames)
+        for (const statement of program.body) {
+          if (statement.type === 'ImportDeclaration') {
+            atomImportMap.addFromImportDecl(statement)
+          }
+        }
+
         const fileKey = getFileKey(id)
-        let usedAtom = false
         let functionDepth = 0
         const exportedVarDecls = new Set<ESTree.VariableDeclaration>()
 
-        function handleVarDecl(node: ESTree.VariableDeclaration, containerEnd: number): void {
-          if (debugLabelEnabled) {
-            const labels = collectDebugLabelNames(node, atomImportMap)
-            if (labels.length > 0) {
-              const assignments = labels
-                .map((label) => `${label}.debugLabel = ${JSON.stringify(label)};`)
-                .join('\n')
-              s.appendRight(containerEnd, `\n${assignments}`)
-            }
-          }
-          if (reactRefreshEnabled && functionDepth === 0) {
-            for (const decl of node.declarations) {
-              if (!decl.init) continue
-              const key = decl.id.type === 'Identifier' ? decl.id.name : '[missing-declarator]'
-              if (scanForAtomCalls(decl.init, [key], atomImportMap, fileKey, s)) {
-                usedAtom = true
+        function handleVarDecl(
+          node: ESTree.VariableDeclaration,
+          containerEnd: number,
+          ctx: VisitorContext<TransformRecordData>,
+        ): void {
+          for (const declarator of node.declarations) {
+            if (!declarator.init) continue
+            if (debugLabelEnabled && declarator.id.type === 'Identifier') {
+              const name = atomImportMap.getAtomImportName(declarator.init)
+              if (name !== null) {
+                ctx.record({
+                  name,
+                  node: declarator,
+                  data: {
+                    kind: 'debug-label',
+                    label: declarator.id.name,
+                    insertPos: containerEnd,
+                  },
+                })
               }
+            }
+            if (reactRefreshEnabled && functionDepth === 0) {
+              const key =
+                declarator.id.type === 'Identifier' ? declarator.id.name : '[missing-declarator]'
+              scanForAtomCalls(declarator.init, [key], atomImportMap, fileKey, ctx)
             }
           }
         }
 
-        new Visitor({
-          ImportDeclaration(node) {
-            atomImportMap.addFromImportDecl(node)
-          },
+        const scopedVisitor = new ScopedVisitor<TransformRecordData>({
+          trackedNames: atomImportMap.getTrackedNames(),
+          walk: (program, visitor) => new Visitor(visitor).visit(program),
+          visitor: {
+            FunctionDeclaration() {
+              functionDepth++
+            },
+            'FunctionDeclaration:exit'() {
+              functionDepth--
+            },
+            FunctionExpression() {
+              functionDepth++
+            },
+            'FunctionExpression:exit'() {
+              functionDepth--
+            },
+            ArrowFunctionExpression() {
+              functionDepth++
+            },
+            'ArrowFunctionExpression:exit'() {
+              functionDepth--
+            },
 
-          FunctionDeclaration() {
-            functionDepth++
-          },
-          'FunctionDeclaration:exit'() {
-            functionDepth--
-          },
-          FunctionExpression() {
-            functionDepth++
-          },
-          'FunctionExpression:exit'() {
-            functionDepth--
-          },
-          ArrowFunctionExpression() {
-            functionDepth++
-          },
-          'ArrowFunctionExpression:exit'() {
-            functionDepth--
-          },
-
-          ExportDefaultDeclaration(node: ESTree.ExportDefaultDeclaration) {
-            if (debugLabelEnabled && isExpressionExportDefault(node.declaration)) {
-              if (atomImportMap.isAtomImport(node.declaration)) {
-                const atomName = getDefaultExportAtomName(id)
-
-                s.move(node.declaration.start, node.declaration.end, node.start)
-                s.prependLeft(node.start, `const ${atomName} = `)
-                s.appendRight(
-                  node.start,
-                  `;\n${atomName}.debugLabel = ${JSON.stringify(atomName)};\n`,
-                )
-                s.appendRight(node.declaration.end, `${atomName};`)
+            ExportDefaultDeclaration(node, ctx) {
+              if (debugLabelEnabled && isExpressionExportDefault(node.declaration)) {
+                const name = atomImportMap.getAtomImportName(node.declaration)
+                if (name !== null) {
+                  ctx.record({
+                    name,
+                    node,
+                    data: {
+                      kind: 'debug-label-default-export',
+                      exportStart: node.start,
+                      declStart: node.declaration.start,
+                      declEnd: node.declaration.end,
+                    },
+                  })
+                }
               }
-            }
-          },
+            },
 
-          ExportNamedDeclaration(node) {
-            if (node.declaration?.type === 'VariableDeclaration') {
-              exportedVarDecls.add(node.declaration)
-              handleVarDecl(node.declaration, node.end)
-            }
-          },
+            ExportNamedDeclaration(node, ctx) {
+              if (node.declaration?.type === 'VariableDeclaration') {
+                exportedVarDecls.add(node.declaration)
+                handleVarDecl(node.declaration, node.end, ctx)
+              }
+            },
 
-          VariableDeclaration(node: ESTree.VariableDeclaration) {
-            if (exportedVarDecls.has(node)) return
-            handleVarDecl(node, node.end)
+            VariableDeclaration(node, ctx) {
+              if (exportedVarDecls.has(node)) return
+              handleVarDecl(node, node.end, ctx)
+            },
           },
-        }).visit(program)
+        })
+
+        const records = scopedVisitor.walk(program)
+
+        let usedAtom = false
+        for (const record of records) {
+          const data = record.data
+          switch (data.kind) {
+            case 'debug-label': {
+              s.appendRight(
+                data.insertPos,
+                `\n${data.label}.debugLabel = ${JSON.stringify(data.label)};`,
+              )
+              break
+            }
+            case 'debug-label-default-export': {
+              const atomName = getDefaultExportAtomName(id)
+
+              s.move(data.declStart, data.declEnd, data.exportStart)
+              s.prependLeft(data.exportStart, `const ${atomName} = `)
+              s.appendRight(
+                data.exportStart,
+                `;\n${atomName}.debugLabel = ${JSON.stringify(atomName)};\n`,
+              )
+              s.appendRight(data.declEnd, `${atomName};`)
+              break
+            }
+            case 'refresh': {
+              wrapWithCacheGetExpression(s, data.key, data.start, data.end)
+              usedAtom = true
+              break
+            }
+          }
+        }
 
         if (reactRefreshEnabled && usedAtom) {
           const insertPos = getCacheInsertionPosition(program)

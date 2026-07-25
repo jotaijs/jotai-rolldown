@@ -33,6 +33,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "oxc-unshadowed-visitor": "^0.1.0",
     "rolldown-string": "^0.3.0"
   },
   "devDependencies": {
