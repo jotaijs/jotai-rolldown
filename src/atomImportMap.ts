@@ -52,27 +52,34 @@ export function createAtomImportMap(atomNames: string[]): AtomImportMap {
 }
 
 const ATOM_IMPORTS = [
-  'abortableAtom',
+  // Core
   'atom',
   'atomFamily',
   'atomWithDefault',
-  'atomWithHash',
-  'atomWithImmer',
-  'atomWithInfiniteQuery',
-  'atomWithMachine',
-  'atomWithMutation',
   'atomWithObservable',
-  'atomWithProxy',
-  'atomWithQuery',
   'atomWithReducer',
   'atomWithReset',
-  'atomWithSubscription',
   'atomWithStorage',
-  'atomWithStore',
   'freezeAtom',
   'loadable',
   'selectAtom',
   'splitAtom',
+  // jotai-xstate
+  'atomWithMachine',
+  // jotai-immer
+  'atomWithImmer',
+  // jotai-valtio
+  'atomWithProxy',
+  // jotai-trpc + jotai-relay
+  'atomWithQuery',
+  'atomWithMutation',
+  'atomWithSubscription',
+  // jotai-redux + jotai-zustand
+  'atomWithStore',
+  // jotai-location
+  'atomWithHash',
+  // jotai-tanstack-query
+  'atomWithInfiniteQuery',
 ] as const
 
 const ATOM_IMPORT_SET = new Set<string>(ATOM_IMPORTS)
