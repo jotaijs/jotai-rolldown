@@ -2,19 +2,29 @@ import type { ESTree } from 'rolldown/utils'
 
 export interface AtomImportMap {
   addFromImportDecl(importDecl: ESTree.ImportDeclaration): void
-  isAtomImport(expression: ESTree.Expression): boolean
+  /**
+   * Returns the local identifier name an atom reference depends on
+   * (the callee name, or the namespace object name for `ns.atom()` calls),
+   * or `null` if the expression is not an atom call.
+   */
+  getAtomImportName(expression: ESTree.Expression): string | null
+  getTrackedNames(): string[]
+}
+
+function isJotaiSource(source: string): boolean {
+  return source === 'jotai' || source.startsWith('jotai/') || source.startsWith('jotai-')
 }
 
 export function createAtomImportMap(atomNames: string[]): AtomImportMap {
   const named = new Set<string>(atomNames)
   const namespace = new Set<string>()
 
-  const isAtomImport = (expression: ESTree.Expression): boolean => {
+  const getAtomImportName = (expression: ESTree.Expression): string | null => {
     if (expression.type === 'CallExpression') {
-      return isAtomImport(expression.callee)
+      return getAtomImportName(expression.callee)
     }
     if (expression.type === 'Identifier') {
-      return named.has(expression.name)
+      return named.has(expression.name) ? expression.name : null
     }
     if (
       expression.type === 'MemberExpression' &&
@@ -22,13 +32,15 @@ export function createAtomImportMap(atomNames: string[]): AtomImportMap {
       expression.property.type === 'Identifier'
     ) {
       return namespace.has(expression.object.name) && ATOM_IMPORT_SET.has(expression.property.name)
+        ? expression.object.name
+        : null
     }
-    return false
+    return null
   }
 
   return {
     addFromImportDecl(importDecl) {
-      if (!importDecl.source.value.startsWith('jotai')) return
+      if (!isJotaiSource(importDecl.source.value)) return
 
       for (const specifier of importDecl.specifiers) {
         if (specifier.type === 'ImportSpecifier') {
@@ -47,7 +59,10 @@ export function createAtomImportMap(atomNames: string[]): AtomImportMap {
         }
       }
     },
-    isAtomImport,
+    getAtomImportName,
+    getTrackedNames() {
+      return [...new Set([...named, ...namespace])]
+    },
   }
 }
 
