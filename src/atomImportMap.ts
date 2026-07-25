@@ -64,6 +64,7 @@ const ATOM_IMPORTS = [
   'loadable',
   'selectAtom',
   'splitAtom',
+  'unwrap',
   // jotai-xstate
   'atomWithMachine',
   // jotai-immer
@@ -78,8 +79,28 @@ const ATOM_IMPORTS = [
   'atomWithStore',
   // jotai-location
   'atomWithHash',
+  'atomWithLocation',
+  // jotai-optics
+  'focusAtom',
+  // jotai-form
+  'atomWithValidate',
+  'validateAtoms',
+  // jotai-cache
+  'atomWithCache',
+  // jotai-recoil
+  'atomWithRecoilValue',
   // jotai-tanstack-query
+  'atomWithQuery',
+  'atomWithQueries',
   'atomWithInfiniteQuery',
+  'atomWithMutation',
+  'atomWithSuspenseQuery',
+  'atomWithSuspenseInfiniteQuery',
+  'atomWithMutationState',
+  // jotai-eager
+  'eagerAtom',
+  // jotai-effect
+  'atomEffect',
 ] as const
 
 const ATOM_IMPORT_SET = new Set<string>(ATOM_IMPORTS)
