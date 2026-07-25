@@ -1,6 +1,6 @@
 {
   "name": "jotai-rolldown",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Rolldown plugin for Jotai debug labels and React Refresh support",
   "keywords": [
     "jotai",
